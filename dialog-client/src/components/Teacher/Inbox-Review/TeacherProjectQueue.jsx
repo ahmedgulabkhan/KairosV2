@@ -31,10 +31,10 @@ export default function TeacherProjectQueue() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedProject, setSelectedProject] = useState(null);
   const [showDetails, setShowDetails] = useState(false);
-  const [selectedSubject, setSelectedSubject] = useState("");
-  const [hasSubjectFilter, setHasSubjectFilter] = useState(false);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [studentNameFilter, setStudentNameFilter] = useState("");
+  const [subjectFilter, setSubjectFilter] = useState("");
 
   const {
     deletionRequests,
@@ -50,6 +50,7 @@ export default function TeacherProjectQueue() {
   const [currentStageIndex, setCurrentStageIndex] = useState(0);
   const [stageStatuses, setStageStatuses] = useState({});
   const [initialStageStatuses, setInitialStageStatuses] = useState({});
+  const [stageFeedbacks, setStageFeedbacks] = useState({});
   const [overallComment, setOverallComment] = useState("");
   const [editableProjectData, setEditableProjectData] = useState(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
@@ -101,6 +102,13 @@ export default function TeacherProjectQueue() {
     }
   }, [errorMessage]);
   useEffect(() => {
+    if (activeTab === "inbox" && projects.length === 0 && !loading) {
+      loadProjects();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  useEffect(() => {
     if (projects.length > 0) {
       const total = projects.length;
       const approved = projects.filter((p) =>
@@ -148,17 +156,10 @@ export default function TeacherProjectQueue() {
     }
   }, [editableProjectData?.description]);
 
-  const loadProjects = async (subject) => {
+  const loadProjects = async () => {
     try {
-      if (!subject || !subject.trim()) {
-        setError("Please select a subject before fetching projects");
-        return;
-      }
-
       setLoading(true);
       setError("");
-      setSelectedSubject(subject);
-      setHasSubjectFilter(true);
 
       return new Promise((resolve, reject) => {
         google.script.run
@@ -177,6 +178,11 @@ export default function TeacherProjectQueue() {
                   projects = body.action_response.projects;
                 } else if (body.projects && Array.isArray(body.projects)) {
                   projects = body.projects;
+                } else if (
+                  body.action_response?.json?.projects &&
+                  Array.isArray(body.action_response.json.projects)
+                ) {
+                  projects = body.action_response.json.projects;
                 }
               } else if (
                 response &&
@@ -184,6 +190,12 @@ export default function TeacherProjectQueue() {
                 Array.isArray(response.action_response.projects)
               ) {
                 projects = response.action_response.projects;
+              } else if (
+                response &&
+                response.action_response?.json?.projects &&
+                Array.isArray(response.action_response.json.projects)
+              ) {
+                projects = response.action_response.json.projects;
               } else if (Array.isArray(response)) {
                 projects = response;
               }
@@ -238,7 +250,7 @@ export default function TeacherProjectQueue() {
             setLoading(false);
             reject(error);
           })
-          .getTeacherProjectsAll(subject);
+          .getTeacherProjectsAll();
       });
     } catch (err) {
       console.error("Error in loadProjects:", err);
@@ -247,21 +259,34 @@ export default function TeacherProjectQueue() {
     }
   };
 
+  // Helper function to set status to "Project change" for projects with deletion requests
   const filteredProjects = projects.filter((project) => {
     let matchesFilter = true;
     if (filter !== "all") {
       const statusLower = project.status.toLowerCase();
+      const hasDeletionRequests =
+        project.hasDeletionRequests ||
+        (project.deletion_requested &&
+          project.deletion_request_status === "pending");
+
       if (filter === "pending") {
         matchesFilter =
-          statusLower.includes("pending") ||
-          statusLower.includes("new project");
+          (statusLower.includes("pending") ||
+            statusLower.includes("new project")) &&
+          !hasDeletionRequests;
       } else if (filter === "revision") {
-        matchesFilter = statusLower.includes("revision");
+        matchesFilter =
+          statusLower.includes("revision") && !hasDeletionRequests;
+      } else if (filter === "project-change") {
+        matchesFilter = hasDeletionRequests;
       } else if (filter === "approve") {
         matchesFilter =
-          statusLower.includes("approve") || statusLower.includes("approved");
+          (statusLower.includes("approve") ||
+            statusLower.includes("approved")) &&
+          !hasDeletionRequests;
       } else {
-        matchesFilter = statusLower.includes(filter.toLowerCase());
+        matchesFilter =
+          statusLower.includes(filter.toLowerCase()) && !hasDeletionRequests;
       }
     }
 
@@ -298,7 +323,27 @@ export default function TeacherProjectQueue() {
       }
     }
 
-    return matchesFilter && matchesSearch && matchesDateRange;
+    // Student Name filter
+    const matchesStudentName =
+      !studentNameFilter ||
+      (project.owner_name &&
+        project.owner_name
+          .toLowerCase()
+          .includes(studentNameFilter.toLowerCase()));
+
+    // Subject filter
+    const matchesSubject =
+      !subjectFilter ||
+      (project.subject_domain &&
+        project.subject_domain.toLowerCase() === subjectFilter.toLowerCase());
+
+    return (
+      matchesFilter &&
+      matchesSearch &&
+      matchesDateRange &&
+      matchesStudentName &&
+      matchesSubject
+    );
   });
 
   const handleReview = (project) => {
@@ -324,9 +369,11 @@ export default function TeacherProjectQueue() {
       });
       setInitialStageStatuses(initialStatuses);
       setStageStatuses(currentStatuses);
+      setStageFeedbacks({});
     } else {
       setInitialStageStatuses({});
       setStageStatuses({});
+      setStageFeedbacks({});
     }
 
     setDetailsLoading(true);
@@ -397,9 +444,11 @@ export default function TeacherProjectQueue() {
             });
             setInitialStageStatuses(initialStatuses);
             setStageStatuses(currentStatuses);
+            setStageFeedbacks({});
           } else {
             setInitialStageStatuses({});
             setStageStatuses({});
+            setStageFeedbacks({});
           }
 
           setDetailsLoading(false);
@@ -572,7 +621,6 @@ export default function TeacherProjectQueue() {
         setErrorMessage("Error: Missing project data. Cannot submit.");
         return;
       }
-
       if (!editableProjectData.project_id || !editableProjectData.user_id) {
         setErrorMessage("Error: Missing project ID or user ID. Cannot submit.");
         return;
@@ -585,6 +633,14 @@ export default function TeacherProjectQueue() {
           const status = stageStatuses[stage.stage_id] || stage.status;
           if (status) {
             stage.status = status;
+          }
+          const feedback = stageFeedbacks[stage.stage_id];
+          if (feedback !== undefined) {
+            // Ensure gate object exists
+            if (!stage.gate) {
+              stage.gate = {};
+            }
+            stage.gate.feedback = feedback;
           }
           return stage;
         });
@@ -738,7 +794,15 @@ export default function TeacherProjectQueue() {
         (stageId) => !stageStatuses[stageId]
       );
 
-    if (hasUnsavedChanges || hasChangedStatuses) {
+    const hasChangedFeedbacks =
+      editableProjectData?.stages?.some((stage) => {
+        if (!stage.stage_id) return false;
+        const currentFeedback = stageFeedbacks[stage.stage_id] || "";
+        const originalFeedback = stage.gate?.feedback || "";
+        return currentFeedback !== originalFeedback;
+      }) || false;
+
+    if (hasUnsavedChanges || hasChangedStatuses || hasChangedFeedbacks) {
       setShowCloseConfirm(true);
       return;
     }
@@ -752,6 +816,7 @@ export default function TeacherProjectQueue() {
     setHasUnsavedChanges(false);
     setStageStatuses({});
     setInitialStageStatuses({});
+    setStageFeedbacks({});
     setSuccessMessage("");
     setErrorMessage("");
     setShowCloseConfirm(false);
@@ -862,7 +927,11 @@ export default function TeacherProjectQueue() {
 
                 // Also update main projects list
                 setProjects((prevProjects) => {
-                  return flagTasksWithDeletionRequests(prevProjects, requests);
+                  const flagged = flagTasksWithDeletionRequests(
+                    prevProjects,
+                    requests
+                  );
+                  return flagged;
                 });
               })
               .catch((err) => {
@@ -955,7 +1024,6 @@ export default function TeacherProjectQueue() {
                 [newData],
                 updatedDeletionRequests
               );
-
               return flaggedProjects[0] || newData;
             });
 
@@ -981,10 +1049,11 @@ export default function TeacherProjectQueue() {
 
             // Update main projects list as well
             setProjects((prevProjects) => {
-              return flagTasksWithDeletionRequests(
+              const flagged = flagTasksWithDeletionRequests(
                 prevProjects,
                 updatedDeletionRequests
               );
+              return flagged;
             });
 
             setSuccessMessage(
@@ -1137,7 +1206,11 @@ export default function TeacherProjectQueue() {
 
                 // Also update main projects list
                 setProjects((prevProjects) => {
-                  return flagTasksWithDeletionRequests(prevProjects, requests);
+                  const flagged = flagTasksWithDeletionRequests(
+                    prevProjects,
+                    requests
+                  );
+                  return flagged;
                 });
               })
               .catch((err) => {
@@ -1222,10 +1295,11 @@ export default function TeacherProjectQueue() {
                       const updatedProjects = prevProjects.filter(
                         (p) => p.project_id !== project.project_id
                       );
-                      return flagTasksWithDeletionRequests(
+                      const flagged = flagTasksWithDeletionRequests(
                         updatedProjects,
                         requests
                       );
+                      return flagged;
                     });
                   })
                   .catch((err) => {
@@ -1442,7 +1516,6 @@ export default function TeacherProjectQueue() {
                 [newData],
                 updatedDeletionRequests
               );
-
               return flaggedProjects[0] || newData;
             });
 
@@ -1473,10 +1546,11 @@ export default function TeacherProjectQueue() {
 
             // Update main projects list as well
             setProjects((prevProjects) => {
-              return flagTasksWithDeletionRequests(
+              const flagged = flagTasksWithDeletionRequests(
                 prevProjects,
                 updatedDeletionRequests
               );
+              return flagged;
             });
 
             setSuccessMessage(
@@ -1533,14 +1607,12 @@ export default function TeacherProjectQueue() {
         <div className="tpq-error">
           <XCircle size={24} />
           <p>{error}</p>
-          {selectedSubject && (
-            <button
-              onClick={() => loadProjects(selectedSubject)}
-              className="tpq-btn tpq-btn--primary"
-            >
-              Retry
-            </button>
-          )}
+          <button
+            onClick={() => loadProjects()}
+            className="tpq-btn tpq-btn--primary"
+          >
+            Retry
+          </button>
         </div>
       </div>
     );
@@ -1599,33 +1671,10 @@ export default function TeacherProjectQueue() {
             </select>
           </div>
         </div>
-        {hasSubjectFilter && (
+        {activeTab === "inbox" && (
           <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
             <button
-              onClick={() => {
-                setHasSubjectFilter(false);
-                setSelectedSubject("");
-                setProjects([]);
-                setError("");
-                setSearchTerm("");
-                setFilter("all");
-                setStartDate("");
-                setEndDate("");
-              }}
-              className="tpq-btn tpq-btn--secondary"
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "8px",
-                padding: "8px 16px",
-              }}
-              title="Go back to subject selection"
-            >
-              <ArrowLeft size={16} />
-              Back
-            </button>
-            <button
-              onClick={() => loadProjects(selectedSubject)}
+              onClick={() => loadProjects()}
               disabled={loading}
               className="tpq-btn tpq-btn--secondary"
               style={{
@@ -1658,6 +1707,10 @@ export default function TeacherProjectQueue() {
           setStartDate={setStartDate}
           endDate={endDate}
           setEndDate={setEndDate}
+          studentNameFilter={studentNameFilter}
+          setStudentNameFilter={setStudentNameFilter}
+          subjectFilter={subjectFilter}
+          setSubjectFilter={setSubjectFilter}
           onReview={handleReview}
           onApprove={handleApprove}
           onReject={handleReject}
@@ -1676,10 +1729,7 @@ export default function TeacherProjectQueue() {
             setSelectedProjectDeletionRequests(uniqueDetails);
             setShowDeletionRequestsModal(true);
           }}
-          hasSubjectFilter={hasSubjectFilter}
           loading={loading}
-          onApplySubjectFilter={loadProjects}
-          selectedSubject={selectedSubject}
         />
       )}
 
@@ -2249,6 +2299,93 @@ export default function TeacherProjectQueue() {
                                     </div>
                                   )}
 
+                                {/* Stage Feedback Section */}
+                                <div className="mt-6 pt-6 border-t border-gray-200">
+                                  <label className="block text-xs font-semibold text-gray-500 mb-2">
+                                    STAGE FEEDBACK
+                                  </label>
+                                  {/* Display existing feedback if available and different from current */}
+                                  {currentStage.gate?.feedback &&
+                                    (!stageFeedbacks[currentStage.stage_id] ||
+                                      stageFeedbacks[currentStage.stage_id] !==
+                                        currentStage.gate.feedback) && (
+                                      <div
+                                        style={{
+                                          marginBottom: "12px",
+                                          padding: "12px 16px",
+                                          backgroundColor: "#f0f9ff",
+                                          border: "1px solid #bfdbfe",
+                                          borderRadius: "6px",
+                                        }}
+                                      >
+                                        <div
+                                          style={{
+                                            fontSize: "12px",
+                                            fontWeight: 600,
+                                            color: "#1e40af",
+                                            marginBottom: "6px",
+                                            display: "flex",
+                                            alignItems: "center",
+                                            gap: "6px",
+                                          }}
+                                        >
+                                          <BookOpen size={14} />
+                                          Previous Feedback
+                                        </div>
+                                        <div
+                                          style={{
+                                            padding: "8px 12px",
+                                            backgroundColor: "white",
+                                            border: "1px solid #cbd5e0",
+                                            borderRadius: "4px",
+                                            fontSize: "14px",
+                                            color: "#4a5568",
+                                            lineHeight: "1.6",
+                                            whiteSpace: "pre-wrap",
+                                          }}
+                                        >
+                                          {currentStage.gate.feedback}
+                                        </div>
+                                      </div>
+                                    )}
+                                  <textarea
+                                    value={
+                                      stageFeedbacks[currentStage.stage_id] ||
+                                      currentStage.gate?.feedback ||
+                                      ""
+                                    }
+                                    onChange={(e) => {
+                                      setStageFeedbacks((prev) => ({
+                                        ...prev,
+                                        [currentStage.stage_id]: e.target.value,
+                                      }));
+                                      setHasUnsavedChanges(true);
+                                      setSuccessMessage("");
+                                      setErrorMessage("");
+                                    }}
+                                    className="w-full px-4 py-3 border rounded-lg text-sm text-gray-700 focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none resize-none"
+                                    rows={2}
+                                    style={{
+                                      minHeight: "60px",
+                                      lineHeight: "1.5",
+                                    }}
+                                  />
+                                  {(stageFeedbacks[currentStage.stage_id] ||
+                                    currentStage.gate?.feedback) && (
+                                    <div
+                                      style={{
+                                        marginTop: "8px",
+                                        fontSize: "12px",
+                                        color: "#6b7280",
+                                        fontStyle: "italic",
+                                      }}
+                                    >
+                                      Feedback will be saved when you submit all
+                                      decisions
+                                    </div>
+                                  )}
+                                </div>
+
                                 {/* Gate Standards */}
                                 {currentStage.gate && (
                                   <div>
@@ -2362,8 +2499,9 @@ export default function TeacherProjectQueue() {
                                               : "1px solid #fde68a",
                                         }}
                                       >
-                                        {currentStage.status ||
-                                          stageStatuses[currentStage.stage_id]}
+                                        {(currentStage.status ||
+                                          stageStatuses[currentStage.stage_id]) === "Pending" ? "Revision" : (currentStage.status ||
+                                            stageStatuses[currentStage.stage_id])}
                                       </div>
                                     ) : (
                                       <div
@@ -2546,26 +2684,133 @@ export default function TeacherProjectQueue() {
         >
           <div
             className="tpq-modal"
-            style={{ maxWidth: "400px", zIndex: 20001 }}
+            style={{ maxWidth: "420px", zIndex: 20001 }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="tpq-modal-header">
-              <h2>Unsaved Changes</h2>
+            <div className="tpq-modal-header" style={{ paddingBottom: "16px" }}>
+              <div
+                style={{ display: "flex", alignItems: "center", gap: "12px" }}
+              >
+                <div
+                  style={{
+                    width: "40px",
+                    height: "40px",
+                    borderRadius: "50%",
+                    backgroundColor: "#fef3c7",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexShrink: 0,
+                  }}
+                >
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="#f59e0b"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                    <line x1="12" y1="9" x2="12" y2="13"></line>
+                    <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                  </svg>
+                </div>
+                <h2
+                  style={{
+                    margin: 0,
+                    fontSize: "20px",
+                    fontWeight: "600",
+                    color: "#1a202c",
+                  }}
+                >
+                  Unsaved Changes
+                </h2>
+              </div>
             </div>
-            <div className="tpq-modal-content">
-              <p>
+            <div
+              className="tpq-modal-content"
+              style={{
+                paddingTop: "0",
+                paddingBottom: "24px",
+                marginTop: "8px",
+                marginBottom: "8px",
+              }}
+            >
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: "15px",
+                  lineHeight: "1.6",
+                  color: "#4a5568",
+                }}
+              >
                 You have unsaved changes. Are you sure you want to close? All
                 unsaved edits will be lost.
               </p>
             </div>
-            <div className="tpq-modal-actions">
+            <div
+              className="tpq-modal-actions"
+              style={{
+                paddingTop: "20px",
+                paddingBottom: "8px",
+                paddingRight: "24px",
+                borderTop: "1px solid #e2e8f0",
+                gap: "12px",
+                justifyContent: "flex-end",
+                marginTop: "8px",
+              }}
+            >
               <button
-                className="tpq-btn tpq-btn--secondary"
                 onClick={() => setShowCloseConfirm(false)}
+                style={{
+                  minWidth: "100px",
+                  padding: "10px 20px",
+                  fontSize: "14px",
+                  fontWeight: "500",
+                  backgroundColor: "#f7fafc",
+                  color: "#2d3748",
+                  border: "1px solid #cbd5e0",
+                  borderRadius: "6px",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = "#edf2f7";
+                  e.target.style.borderColor = "#a0aec0";
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = "#f7fafc";
+                  e.target.style.borderColor = "#cbd5e0";
+                }}
               >
                 Cancel
               </button>
-              <button className="tpq-btn tpq-btn--reject" onClick={closeDialog}>
+              <button
+                onClick={closeDialog}
+                style={{
+                  minWidth: "140px",
+                  padding: "10px 20px",
+                  fontSize: "14px",
+                  fontWeight: "500",
+                  backgroundColor: "#f7fafc",
+                  color: "#2d3748",
+                  border: "1px solid #cbd5e0",
+                  borderRadius: "6px",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = "#edf2f7";
+                  e.target.style.borderColor = "#a0aec0";
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = "#f7fafc";
+                  e.target.style.borderColor = "#cbd5e0";
+                }}
+              >
                 Close Without Saving
               </button>
             </div>

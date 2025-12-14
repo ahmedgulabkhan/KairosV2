@@ -5,6 +5,7 @@ import CreateProject from "./components/Student/CreateProject/CreateProject";
 import TeacherProjectQueue from "./components/Teacher/Inbox-Review/TeacherProjectQueue";
 import ProjectDashboard from './components/Student/MyProjects/projectdashboard';
 import StandardsRoadmapDialog from "./components/Teacher/MyRoadmap/StandardsRoadmapDialog";
+import NeedHelpStarting from "./components/Shared/Need_help_starting/NeedHelpStarting";
 
 const DIALOGS = {
   "student-standards": LearningStandardsDialog,
@@ -13,6 +14,7 @@ const DIALOGS = {
   "teacher-project-queue": TeacherProjectQueue,
   "add-standard": LearningStandardsDialog,
   "teacher-roadmap-standards": StandardsRoadmapDialog,
+  "need-help-starting": NeedHelpStarting,
 };
 
 function App() {
